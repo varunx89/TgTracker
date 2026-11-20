@@ -9,6 +9,8 @@ from telethon.tl.types import (
     PeerUser,
     InputPeerSelf,
     InputUserSelf,
+    InputChannel,
+    InputPeerChannel,
 )
 from src.security_guard import (
     canonicalize_chat_identifiers,
@@ -45,12 +47,15 @@ def test_is_peer_authorized():
     assert is_peer_authorized(-1001999999999, allowed) is True
     assert is_peer_authorized(1999999999, allowed) is True
     assert is_peer_authorized(PeerChannel(1999999999), allowed) is True
+    assert is_peer_authorized(InputChannel(channel_id=1999999999, access_hash=0), allowed) is True
+    assert is_peer_authorized(InputPeerChannel(channel_id=1999999999, access_hash=0), allowed) is True
 
     # Unauthorized checks (DMs, other groups)
     assert is_peer_authorized(123456789, allowed) is False
     assert is_peer_authorized(-1001111111111, allowed) is False
     assert is_peer_authorized(PeerUser(55555), allowed) is False
     assert is_peer_authorized(PeerChat(44444), allowed) is False
+    assert is_peer_authorized(InputChannel(channel_id=1111111111, access_hash=0), allowed) is False
 
 
 def test_is_event_strictly_authorized():

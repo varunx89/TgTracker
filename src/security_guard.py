@@ -90,11 +90,13 @@ def canonicalize_chat_identifiers(raw_id: Union[int, str]) -> Set[int]:
 def is_peer_authorized(peer: Any, allowed_canonical_ids: Set[int]) -> bool:
     """
     Evaluates whether an entity, peer object, or peer ID belongs to the authorized set.
+    Handles raw integers, Telethon Peer objects (PeerChannel, PeerChat, PeerUser),
+    Input objects (InputChannel, InputPeerChannel, InputPeerChat), and full TL entity types.
     """
     if peer is None:
         return False
 
-    # Direct integer or string ID
+    # 1. Direct integer or numeric string ID
     if isinstance(peer, (int, str)):
         try:
             peer_id = int(peer)
@@ -105,31 +107,24 @@ def is_peer_authorized(peer: Any, allowed_canonical_ids: Set[int]) -> bool:
         except ValueError:
             return False
 
-    # Telethon Peer objects
-    if isinstance(peer, (PeerChannel, PeerChat, PeerUser)):
-        try:
-            full_peer_id = get_peer_id(peer)
-            if full_peer_id in allowed_canonical_ids:
-                return True
-        except Exception:
-            pass
-
-        # Also test inner ID
-        inner_id = getattr(peer, "channel_id", None) or getattr(peer, "chat_id", None) or getattr(peer, "user_id", None)
-        if inner_id is not None and inner_id in allowed_canonical_ids:
+    # 2. Universal get_peer_id helper (works across Peer, InputPeer, and InputChannel types)
+    try:
+        resolved_peer_id = get_peer_id(peer)
+        if resolved_peer_id in allowed_canonical_ids:
             return True
-
-    # Telethon Channel/Chat/User TL objects
-    tl_id = getattr(peer, "id", None)
-    if tl_id is not None:
-        if tl_id in allowed_canonical_ids:
+        if bool(canonicalize_chat_identifiers(resolved_peer_id).intersection(allowed_canonical_ids)):
             return True
-        try:
-            full_id = get_peer_id(peer)
-            if full_id in allowed_canonical_ids:
+    except Exception:
+        pass
+
+    # 3. Check inner numeric attributes (channel_id, chat_id, user_id, id)
+    for attr in ("channel_id", "chat_id", "user_id", "id"):
+        inner_val = getattr(peer, attr, None)
+        if inner_val is not None and isinstance(inner_val, int):
+            if inner_val in allowed_canonical_ids:
                 return True
-        except Exception:
-            pass
+            if bool(canonicalize_chat_identifiers(inner_val).intersection(allowed_canonical_ids)):
+                return True
 
     return False
 
