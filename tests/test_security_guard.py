@@ -3,11 +3,18 @@
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from telethon.tl.types import PeerChannel, PeerChat, PeerUser
+from telethon.tl.types import (
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    InputPeerSelf,
+    InputUserSelf,
+)
 from src.security_guard import (
     canonicalize_chat_identifiers,
     is_peer_authorized,
     is_event_strictly_authorized,
+    is_self_entity,
     apply_user_client_sandbox,
     apply_bot_client_sandbox,
     SecurityAccessDeniedError,
@@ -166,5 +173,30 @@ def test_bot_client_sandbox_destination_restriction():
 
         with pytest.raises(SecurityAccessDeniedError, match="unauthorized peer"):
             await mock_client.send_file(12345678, b"data")
+
+    asyncio.run(_run())
+
+
+def test_user_client_sandbox_self_entity_resolution():
+    async def _run():
+        mock_client = MagicMock()
+        mock_client.get_entity = AsyncMock(return_value="self_entity")
+        mock_client.get_input_entity = AsyncMock(return_value="input_self_entity")
+        apply_user_client_sandbox(mock_client, -1001999999999)
+
+        # 'me' and 'self' strings work
+        assert await mock_client.get_entity("me") == "self_entity"
+        assert await mock_client.get_input_entity("me") == "input_self_entity"
+
+        # InputUserSelf() and InputPeerSelf() work
+        input_user_self = InputUserSelf()
+        input_peer_self = InputPeerSelf()
+        assert await mock_client.get_input_entity(input_user_self) == "input_self_entity"
+        assert await mock_client.get_input_entity(input_peer_self) == "input_self_entity"
+        assert await mock_client.get_entity(input_user_self) == "self_entity"
+
+        # Unauthorized entity is blocked
+        with pytest.raises(SecurityAccessDeniedError, match="unauthorized"):
+            await mock_client.get_input_entity(999888777)
 
     asyncio.run(_run())

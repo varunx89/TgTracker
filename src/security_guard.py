@@ -18,6 +18,8 @@ from telethon.tl.types import (
     PeerChannel,
     PeerChat,
     PeerUser,
+    InputPeerSelf,
+    InputUserSelf,
 )
 from telethon.utils import get_peer_id, resolve_id
 
@@ -27,6 +29,20 @@ logger = logging.getLogger("TgTracker.SecurityGuard")
 class SecurityAccessDeniedError(PermissionError):
     """Raised when an operation attempts to access an unauthorized chat or perform a forbidden action."""
     pass
+
+
+def is_self_entity(entity: Any) -> bool:
+    """
+    Evaluates whether an entity refers to the logged-in user account itself.
+    Handles string aliases ('me', 'self', None) and internal Telethon TL types
+    (InputPeerSelf, InputUserSelf).
+    """
+    if entity in ("me", "self", None):
+        return True
+    if isinstance(entity, (InputPeerSelf, InputUserSelf)):
+        return True
+    cls_name = getattr(getattr(entity, "__class__", None), "__name__", "")
+    return cls_name in ("InputPeerSelf", "InputUserSelf", "UserSelf")
 
 
 def canonicalize_chat_identifiers(raw_id: Union[int, str]) -> Set[int]:
@@ -192,8 +208,8 @@ def apply_user_client_sandbox(client: TelegramClient, allowed_source_id: Union[i
     original_get_input_entity = client.get_input_entity
 
     async def guarded_get_entity(entity, *args, **kwargs):
-        # Allow resolving 'me' or None (for client initialization verification)
-        if entity in ("me", "self", None):
+        # Allow resolving 'me' / InputUserSelf / InputPeerSelf for client initialization verification
+        if is_self_entity(entity):
             return await original_get_entity(entity, *args, **kwargs)
 
         if not is_peer_authorized(entity, allowed_ids):
@@ -204,7 +220,8 @@ def apply_user_client_sandbox(client: TelegramClient, allowed_source_id: Union[i
         return await original_get_entity(entity, *args, **kwargs)
 
     async def guarded_get_input_entity(entity, *args, **kwargs):
-        if entity in ("me", "self", None):
+        # Allow resolving 'me' / InputUserSelf / InputPeerSelf for client initialization verification
+        if is_self_entity(entity):
             return await original_get_input_entity(entity, *args, **kwargs)
 
         if not is_peer_authorized(entity, allowed_ids):
