@@ -128,6 +128,10 @@ class TrackerService:
         bot_me = await self.bot_client.get_me()
         logger.info("Bot client connected successfully as: @%s (ID: %s)", bot_me.username, bot_me.id)
 
+        # Verify bot access to destination chat
+        dest_entity = await self.bot_client.get_entity(self.config.destination_receive_chat_id)
+        logger.info("Verified bot access to destination chat: %s", getattr(dest_entity, "title", str(self.config.destination_receive_chat_id)))
+
         # 8. Initialize Replicator Engine
         self.replicator = MessageReplicator(
             bot_client=self.bot_client,
@@ -137,16 +141,24 @@ class TrackerService:
             preserve_replies=self.config.preserve_replies,
         )
 
-        # 9. Register strictly guarded message listener
-        @self.user_client.on(events.NewMessage(chats=self.config.source_track_chat_id))
+        # 9. Subscribe to MTProto update stream
+        from telethon import functions
+        try:
+            await self.user_client(functions.updates.GetStateRequest())
+            logger.info("Subscribed to Telegram MTProto real-time update stream.")
+        except Exception as e:
+            logger.warning("Could not send GetStateRequest: %s", type(e).__name__)
+
+        # 10. Register strictly guarded message listener
+        @self.user_client.on(events.NewMessage())
         async def on_new_message(event):
             # Double-check gatekeeper filter for complete defense-in-depth
             if not is_event_strictly_authorized(event, allowed_source_ids):
                 # Suppress peer IDs in log to protect personal account privacy
-                logger.debug("SECURITY GATE: Inbound update dropped (source peer is not authorized)")
                 del event
                 return
 
+            logger.info("New message received [ID: %s] from tracked source chat -> Replicating...", event.message.id)
             try:
                 await self.replicator.replicate(event.message, self.user_client)
             except Exception as e:
@@ -167,7 +179,18 @@ class TrackerService:
             except (NotImplementedError, RuntimeError):
                 pass
 
-        await self._shutdown_event.wait()
+        # Concurrently run Telethon update loop and watch for shutdown signal
+        shutdown_waiter = asyncio.create_task(self._shutdown_event.wait())
+        client_waiter = asyncio.create_task(self.user_client.run_until_disconnected())
+
+        done, pending = await asyncio.wait(
+            [shutdown_waiter, client_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
         await self.cleanup()
 
     def stop(self) -> None:

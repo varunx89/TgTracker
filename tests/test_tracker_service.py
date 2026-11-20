@@ -101,10 +101,12 @@ def test_service_start_and_shutdown(tmp_path):
         mock_user.on = MagicMock(return_value=lambda f: f)
         mock_user.is_connected = MagicMock(return_value=True)
         mock_user.disconnect = AsyncMock()
+        mock_user.side_effect = AsyncMock()
 
         mock_bot = MagicMock()
         mock_bot.start = AsyncMock()
         mock_bot.get_me = AsyncMock(return_value=MagicMock(username="ForwardBot", id=88888))
+        mock_bot.get_entity = AsyncMock(return_value=MagicMock(title="Dest Group"))
         mock_bot.is_connected = MagicMock(return_value=True)
         mock_bot.disconnect = AsyncMock()
 
