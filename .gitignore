@@ -1,0 +1,26 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Secrets, Session Files, and Environment variables
+.env
+*.session
+*.session-journal
+*.enc
+*.key
+session.enc
+
+# Logs & Temporary files
+*.log
+*.tmp
+scratch/
+.DS_Store
