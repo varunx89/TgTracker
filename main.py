@@ -33,7 +33,10 @@ def setup_secure_logging(log_level_str: str) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     # Lower Telethon internal debug noise to prevent verbose payload dumps
-    logging.getLogger("telethon").setLevel(logging.WARNING)
+    if level == logging.DEBUG:
+        logging.getLogger("telethon").setLevel(logging.INFO)
+    else:
+        logging.getLogger("telethon").setLevel(logging.WARNING)
 
 
 async def run_tracker(env_file: str | None, verify_only: bool) -> None:

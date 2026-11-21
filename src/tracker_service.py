@@ -141,16 +141,73 @@ class TrackerService:
             preserve_replies=self.config.preserve_replies,
         )
 
-        # 9. Subscribe to MTProto update stream
-        from telethon import functions
+        # 9. Synchronize channel state & entity cache for MTProto channel updates
+        # Since get_dialogs() is sandboxed for zero-access privacy, Telethon's internal MessageBox
+        # and EntityCache must be explicitly initialized with the authorized channel's access_hash
+        # and current PTS sequence. Without this, Telegram channel differences and UpdateChannelTooLong
+        # events are silently dropped by MTProto client loops.
+        from telethon import functions, utils
+        try:
+            try:
+                bare_channel_id = utils.get_peer_id(source_entity, add_mark=False)
+            except Exception:
+                raw_id = getattr(source_entity, "id", None) or getattr(source_entity, "channel_id", None)
+                bare_channel_id = int(raw_id) if raw_id is not None else abs(int(str(self.config.source_track_chat_id).replace("-100", "")))
+
+            # Ensure channel access_hash is in EntityCache
+            if hasattr(self.user_client, "_mb_entity_cache"):
+                self.user_client._mb_entity_cache.extend([], [source_entity])
+
+            # Query initial message history to resolve active PTS
+            input_peer = await self.user_client.get_input_entity(source_entity)
+            history = await self.user_client(functions.messages.GetHistoryRequest(
+                peer=input_peer,
+                offset_id=0,
+                offset_date=None,
+                add_offset=0,
+                limit=1,
+                max_id=0,
+                min_id=0,
+                hash=0,
+            ))
+
+            channel_pts = getattr(history, "pts", None)
+            if hasattr(self.user_client, "_message_box"):
+                if channel_pts:
+                    self.user_client._message_box.try_set_channel_state(bare_channel_id, channel_pts)
+                    logger.info("Synchronized channel MTProto state (pts: %s) for source chat.", channel_pts)
+                else:
+                    self.user_client._message_box.try_set_channel_state(bare_channel_id, 1)
+
+            if hasattr(history, "chats") and hasattr(self.user_client, "_mb_entity_cache"):
+                self.user_client._mb_entity_cache.extend(getattr(history, "users", []), history.chats)
+
+        except Exception as e:
+            logger.warning("Could not synchronize channel MTProto state: %s. Using default baseline.", type(e).__name__)
+            try:
+                bare_channel_id = utils.get_peer_id(source_entity, add_mark=False)
+                if hasattr(self.user_client, "_message_box"):
+                    self.user_client._message_box.try_set_channel_state(bare_channel_id, 1)
+            except Exception:
+                pass
+
+        # Subscribe to MTProto account update stream
         try:
             await self.user_client(functions.updates.GetStateRequest())
             logger.info("Subscribed to Telegram MTProto real-time update stream.")
         except Exception as e:
             logger.warning("Could not send GetStateRequest: %s", type(e).__name__)
 
+        # Catch up any pending channel updates
+        try:
+            if hasattr(self.user_client, "catch_up"):
+                await self.user_client.catch_up()
+                logger.info("Triggered MTProto catch_up() for pending updates.")
+        except Exception as e:
+            logger.warning("Could not complete catch_up: %s", type(e).__name__)
+
         # 10. Register strictly guarded message listener
-        @self.user_client.on(events.NewMessage())
+        @self.user_client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event):
             # Double-check gatekeeper filter for complete defense-in-depth
             if not is_event_strictly_authorized(event, allowed_source_ids):
@@ -166,6 +223,11 @@ class TrackerService:
                 logger.error("Error in replication pipeline: %s", type(e).__name__)
             finally:
                 del event
+
+        @self.user_client.on(events.Raw())
+        async def on_raw_update(event):
+            # Safe diagnostic logging of raw MTProto updates (type name only, zero payload)
+            logger.debug("Raw MTProto event received: %s", type(event).__name__)
 
         self._running = True
         logger.info("TgTracker is ACTIVE. Listening strictly on group: %s", self.config.source_track_chat_id)
